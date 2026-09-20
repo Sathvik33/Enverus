@@ -1,0 +1,71 @@
+graph TD
+    PDF[/"📄 PDF Document"/]
+
+    subgraph INGESTION["Ingestion Pipeline"]
+        PARSE["Layout-Aware Parser<br/>(pymupdf4llm + PyMuPDF)"]
+        NORM["Normalizer<br/>(ParsedElement schema)"]
+        CLASSIFY["Content Classifier<br/>(text/table/image/heading/caption)"]
+
+        subgraph PROCESSING["Multimodal Processing"]
+            TEXT_PROC["Text Chunker<br/>(structure-aware, ~500 tokens)"]
+            TABLE_PROC["Table Processor<br/>(markdown → structured data)"]
+            IMAGE_PROC["Image Processor<br/>(extract, save, link captions)"]
+        end
+
+        subgraph EMBEDDING["Embedding Generation"]
+            TEXT_EMB["Text Embeddings<br/>(all-mpnet-base-v2, 768d)"]
+            TABLE_EMB["Table Embeddings<br/>(text representation, 768d)"]
+            IMAGE_EMB["CLIP Embeddings<br/>(ViT-B/32, 512d)"]
+        end
+    end
+
+    DB[("PostgreSQL + pgvector<br/>text_chunks: vector(768)<br/>table_chunks: vector(768)<br/>image_chunks: vector(512)")]
+
+    subgraph QUERY["Query Pipeline (LangGraph)"]
+        INPUT_GUARD["Input Guardrail<br/>(PII detection)"]
+        QUERY_ANAL["Query Analyzer<br/>(type/modality routing)"]
+
+        subgraph RETRIEVAL["Multimodal Retrieval"]
+            DENSE["Dense Text Search<br/>(pgvector cosine)"]
+            BM25["BM25 Keyword Search<br/>(rank_bm25)"]
+            TABLE_SEARCH["Table Search<br/>(pgvector cosine)"]
+            IMAGE_SEARCH["Image Search<br/>(CLIP text→image)"]
+        end
+
+        RRF["RRF Fusion<br/>(k=60)"]
+        RERANK["Cross-Encoder Reranker<br/>(ms-marco-MiniLM-L-6-v2)"]
+        EVIDENCE["Evidence Validator"]
+        CONTEXT["Context Builder"]
+        LLM["LLM Generation<br/>(Ollama)"]
+        OUTPUT_GUARD["Output Guardrail<br/>(grounding check)"]
+    end
+
+    ANSWER["📋 Answer + Citations + Evidence"]
+
+    PDF --> PARSE --> NORM --> CLASSIFY
+    CLASSIFY --> TEXT_PROC --> TEXT_EMB
+    CLASSIFY --> TABLE_PROC --> TABLE_EMB
+    CLASSIFY --> IMAGE_PROC --> IMAGE_EMB
+    TEXT_EMB --> DB
+    TABLE_EMB --> DB
+    IMAGE_EMB --> DB
+
+    DB --> DENSE
+    DB --> BM25
+    DB --> TABLE_SEARCH
+    DB --> IMAGE_SEARCH
+
+    INPUT_GUARD --> QUERY_ANAL
+    QUERY_ANAL --> DENSE
+    QUERY_ANAL --> BM25
+    QUERY_ANAL --> TABLE_SEARCH
+    QUERY_ANAL --> IMAGE_SEARCH
+
+    DENSE --> RRF
+    BM25 --> RRF
+    TABLE_SEARCH --> RRF
+    IMAGE_SEARCH --> RRF
+
+    RRF --> RERANK --> EVIDENCE
+    EVIDENCE -->|sufficient| CONTEXT --> LLM --> OUTPUT_GUARD --> ANSWER
+    EVIDENCE -->|insufficient| QUERY_ANAL
