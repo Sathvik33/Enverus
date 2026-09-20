@@ -32,11 +32,7 @@ Scientific papers and technical specifications are inherently multimodal:
 
 ## 🏗️ Visualization Workflow
 
-The end-to-end architecture is divided into an asynchronous **Multimodal Ingestion Pipeline** and a resilient, self-correcting **Query Execution Graph**.
-
-### Architecture Diagram
-
-![Multimodal RAG Architecture Workflow](docs/rag_workflow.png)
+The end-to-end architecture is divided into an asynchronous **Multimodal Ingestion Pipeline** and a resilient, self-correcting **Query Execution Graph**:
 
 ```mermaid
 graph TD
@@ -252,6 +248,112 @@ tests/test_rrf.py .....                                                  [100%]
 
 ============================= 37 passed in 8.74s ==============================
 ```
+
+---
+
+## 🧭 Interactive Workflow Walkthrough: The User Journey
+
+Here is the exact step-by-step lifecycle of how a document is ingested, indexed into vector spaces, and queried with real-time streaming:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 👤 User
+    participant UI as 💻 React 19 Frontend
+    participant API as ⚡ FastAPI Backend
+    participant Ingest as 📄 Ingestion Engine
+    participant DB as 🗄️ Neon PostgreSQL (pgvector)
+    participant LLM as 🧠 Ollama (Qwen 2.5)
+
+    Note over User,DB: Phase 1: Ingestion & Vector Indexing
+    User->>UI: 1. Drag & drop research paper (.pdf)
+    UI->>API: POST /api/documents/upload
+    API->>Ingest: Extract layout, tables, figures & prose
+    Ingest->>Ingest: Generate MPNet-768d & SigLIP-768d embeddings
+    Ingest->>DB: Store chunks in text_chunks, table_chunks, image_chunks
+    API-->>UI: Document Ready (Live stats: Pages, Chunks, Tables, Images)
+
+    Note over User,LLM: Phase 2: Natural Query & Real-Time Streaming
+    User->>UI: 2. Enters query (e.g. "What does Figure 4 show?")
+    UI->>API: POST /api/chat/stream (SSE Request)
+    API->>API: Input Guardrail (PII Scan) + Query Analyzer
+    par 4-Way Parallel Vector Retrieval
+        API->>DB: Dense semantic search (MPNet cosine)
+        API->>DB: Keyword search (BM25)
+        API->>DB: Structured table search
+        API->>DB: Visual diagram search (SigLIP text→image)
+    end
+    DB-->>API: Top candidates from all modalities
+    API->>API: Reciprocal Rank Fusion (RRF k=60)
+    API->>API: CrossEncoder neural reranking (ms-marco)
+    API->>API: Evidence sufficiency validation
+    API-->>UI: Event: metadata (Verified citations & retrieved snippets)
+    API->>LLM: Stream grounded prompt with evidence items
+    loop Token-by-token streaming
+        LLM-->>API: Stream token chunks
+        API-->>UI: Event: token (Real-time animated text rendering)
+    end
+    API-->>UI: Event: done (Final answer & chat history persistence)
+    User->>UI: 3. Clicks "📚 Sources" button to inspect evidence, tables & figures
+```
+
+### 1️⃣ Step 1: Uploading & Ingesting Documents
+- **What You Do**: Drag and drop any research paper (`.pdf`) into the sidebar dropzone or enter an existing Document ID.
+- **What Happens Under the Hood**:
+  1. `PyMuPDF4LLM` analyzes document layout, preserving atomic tables in clean Markdown and isolating high-resolution figures.
+  2. The ingestion pipeline generates:
+     - **Text Chunks**: Structure-aware ~500-token chunks with heading breadcrumbs (`sentence-transformers/all-mpnet-base-v2`, 768-dim).
+     - **Table Chunks**: Atomic tables preserved without row/column fragmentation (768-dim).
+     - **Figure Chunks**: Cropped images and captions embedded with **Google SigLIP** (`google/siglip-base-patch16-224`, 768-dim).
+  3. Chunks are committed to Neon PostgreSQL using HNSW cosine indexes (`m=16`, `ef_construction=64`).
+  4. The UI displays live document telemetry: **Pages**, **Text Chunks**, **Tables**, and **Images**.
+
+---
+
+### 2️⃣ Step 2: Asking Questions (Text, Tables, Charts & Figures)
+- **What You Do**: Type a natural language question or pick a starter prompt card (e.g., *"Summarize key metrics in Table 2"*, *"What do the figures illustrate?"*).
+- **What Happens Under the Hood**:
+  1. **Input Guardrail**: Scans the query for PII and sanitizes prompt injection vectors.
+  2. **Query Analyzer**: Classifies intent (`numerical`, `table`, `visual`, `comparison`) and determines which search modalities to activate.
+  3. **Parallel 4-Way Retrieval**:
+     - *Dense Semantic Search* against text passages.
+     - *BM25 Keyword Matching* for exact acronyms and numerical values.
+     - *Atomic Table Search* for benchmark metrics.
+     - *Visual Semantic Search* matching query semantics against SigLIP image embeddings.
+
+---
+
+### 3️⃣ Step 3: Fusion, Reranking & Dynamic Self-Correction
+- **What Happens Under the Hood**:
+  1. **Reciprocal Rank Fusion (RRF)**: Merges candidates across text, keyword, and image spaces using $RRF(d) = \sum \frac{1}{60 + \text{rank}(d)}$.
+  2. **CrossEncoder Neural Reranking**: Re-evaluates top candidates using `cross-encoder/ms-marco-MiniLM-L-6-v2`, centering attention on captions, formulas, and headers.
+  3. **Evidence Validator & Self-Correction Loop**:
+     - If evidence is sufficient, execution proceeds directly to context construction.
+     - If evidence is insufficient, LangGraph triggers the **Query Rewriter** to formulate expanded query variants and re-queries the vector database before responding.
+
+---
+
+### 4️⃣ Step 4: Real-Time Token Streaming & Structured Answering
+- **What You See**:
+  - The answer streams into the chat feed **token-by-token** with a smooth pulsing cursor (`▍`).
+  - Responses format cleanly in **rich markdown** (formatted tables, bold headers, bullet points).
+  - Every assertion carries clean, verified page and section citations: `[Page 4, Section 2.2]`.
+
+---
+
+### 5️⃣ Step 5: On-Demand Evidence Inspection (`📚 Sources` Drawer)
+- **What You Do**: Click the **`📚 Sources (N)`** button below any assistant message.
+- **What You See**:
+  - **Verified Citations**: Page numbers and section breadcrumbs.
+  - **Retrieved Evidence**: Raw text snippets and atomic markdown tables with relevance scores.
+  - **Visual Figure Lightbox**: High-resolution image thumbnails with click-to-zoom modal for figures and charts.
+  - **Retrieval Trace**: Complete pipeline telemetry showing individual branch candidates and fusion weights.
+
+---
+
+### 6️⃣ Step 6: Session Management & Document Cleanup
+- **Persistent Chat History**: Previous conversations are stored in PostgreSQL under your authenticated user session with one-click restore.
+- **One-Click Document Deletion**: Click the red trash button on the active document card to permanently delete the document, local files, and all associated vector chunks with confirmation dialog.
 
 ---
 
