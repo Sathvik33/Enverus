@@ -14,12 +14,12 @@ graph TD
 
         subgraph EMBEDDING["Embedding Generation"]
             TEXT_EMB["Text Embeddings<br/>(all-mpnet-base-v2, 768d)"]
-            TABLE_EMB["Table Embeddings<br/>(text representation, 768d)"]
-            IMAGE_EMB["CLIP Embeddings<br/>(ViT-B/32, 512d)"]
+            TABLE_EMB["Table Embeddings<br/>(atomic table text, 768d)"]
+            IMAGE_EMB["SigLIP Embeddings<br/>(google/siglip-base-patch16-224, 768d)"]
         end
     end
 
-    DB[("PostgreSQL + pgvector<br/>text_chunks: vector(768)<br/>table_chunks: vector(768)<br/>image_chunks: vector(512)")]
+    DB[("PostgreSQL + pgvector<br/>text_chunks: vector(768)<br/>table_chunks: vector(768)<br/>image_chunks: vector(768)")]
 
     subgraph QUERY["Query Pipeline (LangGraph)"]
         INPUT_GUARD["Input Guardrail<br/>(PII detection)"]
@@ -29,7 +29,7 @@ graph TD
             DENSE["Dense Text Search<br/>(pgvector cosine)"]
             BM25["BM25 Keyword Search<br/>(rank_bm25)"]
             TABLE_SEARCH["Table Search<br/>(pgvector cosine)"]
-            IMAGE_SEARCH["Image Search<br/>(CLIP text→image)"]
+            IMAGE_SEARCH["Visual Search<br/>(SigLIP text→image, 768d)"]
         end
 
         RRF["RRF Fusion<br/>(k=60)"]

@@ -42,6 +42,8 @@ uploads/
 # Documents, Images & Media
 *.pdf
 *.png
+!docs/*.png
+!docs/**/*.png
 *.jpeg
 *.jpg
 *.webp
