@@ -38,3 +38,4 @@ class RAGState(TypedDict, total=False):
 
     retry_count: int
     retrieval_trace: dict
+    conversation_history: list[dict]

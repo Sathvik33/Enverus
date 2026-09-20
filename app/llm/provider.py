@@ -8,16 +8,25 @@ logger = get_logger(__name__)
 _llm = None
 
 
-def get_llm() -> ChatOllama:
+def get_llm():
     global _llm
     if _llm is None:
         settings = get_settings()
-        logger.info("initializing_llm", model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL)
-        _llm = ChatOllama(
-            model=settings.LLM_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0.1,
-        )
+        if getattr(settings, "LLM_PROVIDER", "ollama") == "groq" and getattr(settings, "GROQ_API_KEY", ""):
+            from langchain_groq import ChatGroq
+            logger.info("initializing_llm_groq", model=settings.GROQ_MODEL)
+            _llm = ChatGroq(
+                model=settings.GROQ_MODEL,
+                api_key=settings.GROQ_API_KEY,
+                temperature=0.0,
+            )
+        else:
+            logger.info("initializing_llm_ollama", model=settings.LLM_MODEL, base_url=settings.OLLAMA_BASE_URL)
+            _llm = ChatOllama(
+                model=settings.LLM_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
+                temperature=0.0,
+            )
     return _llm
 
 

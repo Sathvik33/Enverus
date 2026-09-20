@@ -120,12 +120,13 @@ def get_retrieval_graph():
     return _retrieval_graph
 
 
-async def prepare_stream_context(document_id: str, query: str) -> dict:
+async def prepare_stream_context(document_id: str, query: str, conversation_history: list[dict] = None) -> dict:
     graph = get_retrieval_graph()
     initial_state = {
         "query": query,
         "document_id": document_id,
         "retry_count": 0,
+        "conversation_history": conversation_history or [],
     }
 
     result = await graph.ainvoke(initial_state)
@@ -160,6 +161,7 @@ async def prepare_stream_context(document_id: str, query: str) -> dict:
         "final_evidence": result.get("evidence", []),
     }
 
+    result["conversation_history"] = conversation_history or []
     sys_prompt, prompt, fallback = build_llm_prompt(result)
 
     return {
@@ -173,12 +175,13 @@ async def prepare_stream_context(document_id: str, query: str) -> dict:
     }
 
 
-async def answer_query(document_id: str, query: str) -> dict:
+async def answer_query(document_id: str, query: str, conversation_history: list[dict] = None) -> dict:
     graph = get_rag_graph()
     initial_state = {
         "query": query,
         "document_id": document_id,
         "retry_count": 0,
+        "conversation_history": conversation_history or [],
     }
 
     result = await graph.ainvoke(initial_state)

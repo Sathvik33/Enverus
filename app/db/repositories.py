@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, TextChunk, TableChunk, ImageChunk, User, ChatHistory
+from app.db.models import Document, TextChunk, TableChunk, ImageChunk, User, ChatHistory, ChatSession, ChatMessage
 
 
 class DocumentRepository:
@@ -70,6 +70,13 @@ class DocumentRepository:
         await self.session.execute(delete(TableChunk).where(TableChunk.document_id == document_id))
         await self.session.execute(delete(ImageChunk).where(ImageChunk.document_id == document_id))
         await self.session.execute(delete(ChatHistory).where(ChatHistory.document_id == document_id))
+        
+        session_stmt = select(ChatSession.id).where(ChatSession.document_id == document_id)
+        s_res = await self.session.execute(session_stmt)
+        s_ids = list(s_res.scalars().all())
+        if s_ids:
+            await self.session.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(s_ids)))
+            await self.session.execute(delete(ChatSession).where(ChatSession.id.in_(s_ids)))
 
         doc = await self.get(document_id)
         if doc and doc.file_path and os.path.exists(doc.file_path):
@@ -330,3 +337,100 @@ class ChatHistoryRepository:
         stmt = delete(ChatHistory).where(ChatHistory.user_id == user_id)
         await self.session.execute(stmt)
         await self.session.commit()
+
+
+class ChatSessionRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create_session(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        title: str = "New Chat",
+    ) -> ChatSession:
+        chat_session = ChatSession(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            document_id=document_id,
+            title=title[:250],
+        )
+        self.session.add(chat_session)
+        await self.session.commit()
+        await self.session.refresh(chat_session)
+        return chat_session
+
+    async def get_session(self, session_id: uuid.UUID) -> Optional[ChatSession]:
+        stmt = select(ChatSession).where(ChatSession.id == session_id)
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def get_user_sessions(self, user_id: uuid.UUID, limit: int = 50) -> list[ChatSession]:
+        stmt = (
+            select(ChatSession)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.updated_at.desc())
+            .limit(limit)
+        )
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def get_session_messages(self, session_id: uuid.UUID) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.asc())
+        )
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def add_message(
+        self,
+        session_id: uuid.UUID,
+        role: str,
+        content: str,
+        citations: list[dict] = None,
+        evidence: list[dict] = None,
+    ) -> ChatMessage:
+        from datetime import datetime, timezone
+        msg = ChatMessage(
+            id=uuid.uuid4(),
+            session_id=session_id,
+            role=role,
+            content=content,
+            citations=citations or [],
+            evidence=evidence or [],
+        )
+        self.session.add(msg)
+        await self.session.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id)
+            .values(updated_at=datetime.now(timezone.utc))
+        )
+        await self.session.commit()
+        await self.session.refresh(msg)
+        return msg
+
+    async def update_title(self, session_id: uuid.UUID, title: str) -> None:
+        await self.session.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id)
+            .values(title=title[:250])
+        )
+        await self.session.commit()
+
+    async def delete_session(self, session_id: uuid.UUID) -> bool:
+        from sqlalchemy import delete
+        await self.session.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+        res = await self.session.execute(delete(ChatSession).where(ChatSession.id == session_id))
+        await self.session.commit()
+        return (res.rowcount or 0) > 0
+
+    async def clear_user_sessions(self, user_id: uuid.UUID) -> None:
+        from sqlalchemy import delete
+        sessions = await self.get_user_sessions(user_id, limit=500)
+        session_ids = [s.id for s in sessions]
+        if session_ids:
+            await self.session.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
+            await self.session.execute(delete(ChatSession).where(ChatSession.id.in_(session_ids)))
+            await self.session.commit()

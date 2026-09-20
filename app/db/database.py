@@ -51,7 +51,7 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    from app.db.models import Document, TextChunk, TableChunk, ImageChunk, User, ChatHistory  # noqa: F401
+    from app.db.models import Document, TextChunk, TableChunk, ImageChunk, User, ChatHistory, ChatSession, ChatMessage  # noqa: F401
     eng = get_engine()
     try:
         async with eng.begin() as conn:

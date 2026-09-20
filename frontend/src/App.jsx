@@ -6,7 +6,8 @@ import ChatArea from './components/ChatArea';
 import SourcesDrawer from './components/SourcesDrawer';
 import AuthModal from './components/AuthModal';
 import { 
-  authStorage, fetchMe, getDocument, deleteDocument, sendChat, sendChatStream, getHistory 
+  authStorage, fetchMe, getDocument, deleteDocument, sendChatStream, 
+  getSessions, getSessionDetail, deleteSession 
 } from './services/api';
 import './App.css';
 
@@ -19,7 +20,8 @@ export default function App() {
   const [activeDoc, setActiveDoc] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [history, setHistory] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
   const [sourcesMessage, setSourcesMessage] = useState(null);
 
   // Check auth session validity on mount
@@ -52,18 +54,63 @@ export default function App() {
     loadDoc();
   }, [documentId]);
 
-  // Fetch user history whenever user changes
+  // Fetch user chat sessions whenever user changes
   useEffect(() => {
     if (!user) {
-      setHistory([]);
+      setSessions([]);
+      setActiveSessionId(null);
       return;
     }
-    async function loadHistory() {
-      const items = await getHistory(user.id);
-      setHistory(items);
+    async function loadSessions() {
+      const list = await getSessions(user.id);
+      setSessions(list);
     }
-    loadHistory();
+    loadSessions();
   }, [user]);
+
+  const handleNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+    setSourcesMessage(null);
+  };
+
+  const handleSelectSession = async (sessionItem) => {
+    try {
+      setActiveSessionId(sessionItem.id);
+      if (sessionItem.document_id && sessionItem.document_id !== documentId) {
+        setDocumentId(sessionItem.document_id);
+      }
+      const detail = await getSessionDetail(sessionItem.id);
+      if (detail && detail.messages) {
+        setMessages(
+          detail.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            citations: m.citations || [],
+            evidence: m.evidence || [],
+            trace: {},
+          }))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load session details:', err);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId) => {
+    try {
+      await deleteSession(sessionId);
+      if (activeSessionId === sessionId) {
+        handleNewChat();
+      }
+      if (user) {
+        const list = await getSessions(user.id);
+        setSessions(list);
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
 
   const handleSendMessage = async (queryText) => {
     if (!documentId) return;
@@ -77,9 +124,13 @@ export default function App() {
         documentId,
         queryText,
         user?.id,
+        activeSessionId,
         {
           onMetadata: (metadata) => {
             setLoading(false);
+            if (metadata.session_id && !activeSessionId) {
+              setActiveSessionId(metadata.session_id);
+            }
             setMessages((prev) => [
               ...prev,
               {
@@ -122,6 +173,9 @@ export default function App() {
           },
           onDone: async (doneEvt) => {
             setLoading(false);
+            if (doneEvt.session_id) {
+              setActiveSessionId(doneEvt.session_id);
+            }
             setMessages((prev) => {
               if (prev.length === 0) return prev;
               const lastIdx = prev.length - 1;
@@ -140,8 +194,8 @@ export default function App() {
             });
 
             if (user) {
-              const updatedHist = await getHistory(user.id);
-              setHistory(updatedHist);
+              const updatedSessions = await getSessions(user.id);
+              setSessions(updatedSessions);
             }
           },
           onError: (err) => {
@@ -176,26 +230,12 @@ export default function App() {
     }
   };
 
-  const handleSelectHistory = (item) => {
-    setMessages([
-      { role: 'user', content: item.query },
-      {
-        role: 'assistant',
-        content: item.answer,
-        citations: item.citations || [],
-        evidence: item.evidence || [],
-        trace: {},
-      },
-    ]);
-    if (item.document_id && item.document_id !== documentId) {
-      setDocumentId(item.document_id);
-    }
-  };
-
   const handleLogout = () => {
     authStorage.clear();
     setUser(null);
-    setHistory([]);
+    setSessions([]);
+    setActiveSessionId(null);
+    setMessages([]);
   };
 
   const handleDeleteDocument = async (idToDelete) => {
@@ -209,9 +249,10 @@ export default function App() {
     setDocumentId(null);
     setActiveDoc(null);
     setMessages([]);
+    setActiveSessionId(null);
     if (user) {
-      const userHist = await getHistory(user.id);
-      setHistory(userHist);
+      const userSessions = await getSessions(user.id);
+      setSessions(userSessions);
     }
   };
 
@@ -238,11 +279,21 @@ export default function App() {
             activeDoc={activeDoc}
             documentId={documentId}
             setDocumentId={setDocumentId}
-            onDocumentLoaded={(id) => setDocumentId(id)}
+            onDocumentLoaded={(id) => {
+              setDocumentId(id);
+              handleNewChat();
+            }}
             onDeleteDocument={handleDeleteDocument}
-            history={history}
-            onSelectHistory={handleSelectHistory}
-            onHistoryCleared={() => setHistory([])}
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onNewChat={handleNewChat}
+            onDeleteSession={handleDeleteSession}
+            onSessionsCleared={() => {
+              setSessions([]);
+              setActiveSessionId(null);
+              setMessages([]);
+            }}
             user={user}
             onOpenAuth={(mode) => setAuthModal(mode)}
           />
@@ -279,3 +330,4 @@ export default function App() {
     </div>
   );
 }
+

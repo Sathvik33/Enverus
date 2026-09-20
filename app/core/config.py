@@ -7,6 +7,9 @@ class Settings(BaseSettings):
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "qwen2.5:7b"
+    LLM_PROVIDER: str = "ollama"  # "ollama" or "groq"
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     TEXT_EMBEDDING_MODEL: str = "sentence-transformers/all-mpnet-base-v2"
     TEXT_EMBEDDING_DIM: int = 768

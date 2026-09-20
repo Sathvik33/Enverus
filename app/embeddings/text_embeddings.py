@@ -21,9 +21,15 @@ def _get_model() -> SentenceTransformer:
             model=settings.TEXT_EMBEDDING_MODEL,
         )
 
-        _model = SentenceTransformer(
-            settings.TEXT_EMBEDDING_MODEL
-        )
+        try:
+            _model = SentenceTransformer(
+                settings.TEXT_EMBEDDING_MODEL,
+                local_files_only=True,
+            )
+        except Exception:
+            _model = SentenceTransformer(
+                settings.TEXT_EMBEDDING_MODEL,
+            )
 
     return _model
 

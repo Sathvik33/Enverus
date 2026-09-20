@@ -6,8 +6,10 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 HEDGING_PHRASES = [
-    "I could not find sufficient evidence",
+    "Not enough information in the PDF",
+    "not enough information in the pdf",
     "not enough information",
+    "I could not find sufficient evidence",
     "insufficient evidence",
     "no relevant evidence",
 ]
@@ -18,6 +20,7 @@ def clean_output_artifacts(text: str) -> str:
         return text
 
     # normalize OCR and LaTeX spacing in numbers
+    text = re.sub(r'(\d+)\s*_\._\s*(\d+)', r'\1.\2', text)
     text = re.sub(r'(\d+)\s*\.\s*_?(\d+)', r'\1.\2', text)
     text = re.sub(r'(\d+)\s+%', r'\1%', text)
 
@@ -70,30 +73,25 @@ def validate_output(answer: str, evidence: list[dict], query: str) -> tuple[bool
     settings = get_settings()
 
     if not answer or not answer.strip():
-        return False, "I could not find sufficient evidence in the document.", "Empty answer"
+        return False, "Not enough information in the PDF.", "Empty answer"
 
     for phrase in HEDGING_PHRASES:
         if phrase.lower() in answer.lower():
-            return True, answer, "Model indicated insufficient evidence"
+            return True, "Not enough information in the PDF.", "Model indicated insufficient evidence"
 
     if settings.OUTPUT_GROUNDING_ENABLED and evidence:
         evidence_text = " ".join(e.get("content", "") for e in evidence).lower()
-        answer_sentences = [s.strip() for s in answer.split(".") if s.strip() and len(s.strip()) > 20]
 
-        # basic grounding check — at least some answer content should overlap with evidence
-        if answer_sentences:
-            grounded_count = 0
-            for sentence in answer_sentences:
-                words = sentence.lower().split()
-                key_words = [w for w in words if len(w) > 4]
-                if key_words:
-                    overlap = sum(1 for w in key_words if w in evidence_text)
-                    if overlap / len(key_words) > 0.3:
-                        grounded_count += 1
-            grounding_ratio = grounded_count / len(answer_sentences)
-            if grounding_ratio < 0.3:
+        # Extract meaningful tokens (words, numbers, percentages) from answer
+        tokens = re.findall(r'[A-Za-z0-9.%$]+', answer.lower())
+        meaningful = [t for t in tokens if len(t) >= 3 or any(c.isdigit() for c in t)]
+
+        if meaningful:
+            overlap = sum(1 for t in meaningful if t in evidence_text)
+            grounding_ratio = overlap / len(meaningful)
+            if grounding_ratio < 0.25:
                 logger.warning("low_grounding_score", ratio=grounding_ratio)
-                return False, "I could not find sufficient evidence in the document.", f"Low grounding: {grounding_ratio:.2f}"
+                return False, "Not enough information in the PDF.", f"Low grounding: {grounding_ratio:.2f}"
 
     if settings.PII_DETECTION_ENABLED:
         pii = detect_pii(answer)

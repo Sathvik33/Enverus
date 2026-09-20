@@ -362,8 +362,38 @@ sequenceDiagram
 ### Prerequisites
 - Python 3.11+ (Python 3.13 tested)
 - Node.js 18+
-- Ollama with `qwen2.5:7b` model (`ollama pull qwen2.5:7b`)
+- Ollama with `qwen2.5:7b` model (`ollama pull qwen2.5:7b`) **OR** a free Groq Cloud API key
 - PostgreSQL with `pgvector` extension (or cloud Neon PostgreSQL)
+
+### 💡 LLM Options: Local Ollama vs Groq Cloud API
+
+The system supports both local privacy-first inference and ultra-fast cloud LPU inference:
+
+#### 💻 Option A: Local Ollama (Default)
+Runs 100% locally and privately on your machine:
+```bash
+ollama pull qwen2.5:7b
+```
+In your `.env`:
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+LLM_MODEL=qwen2.5:7b
+```
+
+#### ⚡ Option B: Groq Cloud API (Recommended for laptops without GPU)
+If your laptop does not have a dedicated GPU or lacks the RAM/VRAM to run 7B models locally, you can use **Groq Cloud API** for ultra-fast, free cloud inference:
+
+1. Obtain an API key from [Groq Console](https://console.groq.com/keys).
+2. Configure your `.env`:
+   ```env
+   LLM_PROVIDER=groq
+   GROQ_API_KEY=gsk_your_groq_api_key_here
+   GROQ_MODEL=openai/gpt-oss-120b   # or qwen/qwen3.8-27b, llama-3.3-70b-versatile
+   ```
+3. Restart the backend server. The system seamlessly routes all RAG generation through Groq LPUs!
+
+---
 
 ### 1. Backend Setup
 ```bash

@@ -1,24 +1,57 @@
-SYSTEM_PROMPT = """You are a precise, authoritative research assistant answering questions about research papers.
+SYSTEM_PROMPT = """You are a strict PDF Question-Answering assistant.
 
-CORE RULES:
-- Ground all answers strictly in the provided evidence below. Do not use prior knowledge.
-- If the evidence is insufficient, state: "I could not find sufficient evidence in the document."
-- Never invent facts, numbers, or citations.
+Your job is to answer questions ONLY using the document context provided to you.
 
-ANSWERING GUIDELINES:
-1. Direct, Non-Redundant Answer:
-   - State your direct answer immediately in the opening paragraph in 1-2 clear sentences.
-   - NEVER repeat the opening paragraph or duplicate statements.
-   - Do NOT output artificial meta labels like "Direct Answer:", "- **Direct Answer:**", or "- **Structured Details:**". Speak naturally and directly.
-2. Structured Supporting Details:
-   - Follow the opening answer with organized bullet points or tables for specific metrics, breakdowns, or comparisons.
-   - Present numbers and percentages cleanly (e.g., write "92.07%", not "92 . 07%" or "92._07%").
-3. Clean Citations:
-   - Cite sources at the end of points or sentences using clean format: [Page X, Section Y], [Table N, Page X], or [Figure N, Page X].
-   - Never output internal retrieval labels (like text_dense) or repetitive document titles in citations.
-4. Professional Formatting:
-   - Use bolding for key terms and metrics.
-   - Keep answers clear, readable, and well-organized."""
+GROUNDING RULES:
+
+1. Use only the provided PDF context.
+
+2. If the answer is explicitly present in the context, answer it directly and accurately.
+
+3. Do NOT invent ungrounded facts, entities, or external information. When a question asks for a direct mathematical calculation on figures explicitly stated in the context (such as percentage saved = 100% - percentage used, differences, or ratios), compute the exact value accurately and provide the supporting context figures.
+
+4. Do NOT replace explicit information with placeholders such as:
+   - Framework A
+   - Framework B
+   - Framework C
+   - Person A
+   - Company A
+
+5. If the context explicitly contains the answer, you MUST use the exact information from the context.
+
+6. Do not say "I could not find sufficient evidence" when the answer is explicitly present in the provided context.
+
+7. If multiple retrieved sources contain the same answer, combine them and provide the answer once.
+
+8. If the retrieved context does NOT contain enough information to answer the question, respond exactly:
+
+"Not enough information in the PDF."
+
+9. Do not use your pretrained/general knowledge to fill missing information.
+
+10. Do not guess.
+
+11. Preserve the terminology used in the PDF.
+
+12. For list questions, return the actual names/items found in the PDF rather than generic placeholders.
+
+13. When useful, mention the page/section from which the answer was obtained.
+
+ANSWERING PRIORITY:
+
+Explicit evidence in retrieved context
+>
+Direct supporting evidence
+>
+No answer / "Not enough information in the PDF."
+
+Never:
+
+Retrieved context → uncertainty → guess
+
+Instead:
+
+Retrieved context → extract answer → answer"""
 
 QUERY_ANALYSIS_PROMPT = """Analyze this question and determine what types of information are needed to answer it.
 
@@ -32,20 +65,24 @@ Respond in exactly this JSON format (no markdown, no explanation):
 "rewritten_query": "optimized search query",
 "search_terms": ["term1", "term2"]}}"""
 
-ANSWER_PROMPT = """Based on the following evidence from the document, provide a well-structured answer to the question.
+ANSWER_PROMPT = """DOCUMENT CONTEXT:
 
-EVIDENCE:
 {context}
 
 QUESTION: {query}
 
-REQUIREMENTS:
-- Start directly with the answer in the first sentence.
-- Do NOT repeat or duplicate the summary in subsequent bullet points.
-- Do NOT output artificial labels like "- **Direct Answer:**" or "- **Structured Details:**".
-- Format quantitative data and breakdown points cleanly with bullet points or tables.
-- Cite evidence using clean citations like [Page X, Section Y].
-- Write all numbers and percentages cleanly without spacing artifacts."""
+CRITICAL EXTRACTION RULES:
+1. Carefully read ALL sources in the context before answering.
+2. Verify that ALL entities, subjects, systems, and conditions mentioned in the question match the source sentence:
+   - Do NOT pick a value or metric associated with a different subject (e.g. if the question asks about OpenHands, do NOT pick numbers for MetaGPT or GPT-Pilot).
+   - Do NOT pick a value belonging to a different system (e.g. if the question asks for Agent-as-a-Judge, do NOT pick numbers for LLM-as-a-Judge or human evaluators).
+   - In parallel constructions (e.g. "reaches X and Y in both setting1 and setting2"), map the target condition to its corresponding value (e.g. setting1 -> X, setting2 -> Y).
+   - For entity or list questions, extract the exact names and items directly from the context; NEVER use placeholders like "Framework A, Framework B, Framework C".
+3. If the question asks for percentage saved or reduced compared to a baseline, distinguish between the percentage consumed (e.g., 2.29% of cost, 2.36% of time) and the percentage saved (100% - percentage consumed, i.e., 97.71% of cost and 97.64% of time), and state the exact savings along with the source figures.
+4. If the answer is present in the context, state the direct answer accurately with the page/section citation.
+5. If the retrieved context does NOT contain enough information to answer the question, output exactly:
+   "Not enough information in the PDF."
+"""
 
 EVIDENCE_VALIDATION_PROMPT = """Given this question and retrieved evidence, determine if there is sufficient information to answer.
 

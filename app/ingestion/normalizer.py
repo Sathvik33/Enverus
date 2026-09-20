@@ -71,15 +71,20 @@ def normalize_elements(
     for chunk in parsed_data.get("page_chunks", []):
         metadata = chunk.get("metadata", {})
 
-        page_number = metadata.get("page", 1)
+        page_number = metadata.get("page_number") or metadata.get("page") or 1
 
-        if isinstance(page_number, int) and page_number == 0:
+        if isinstance(page_number, int) and page_number <= 0:
             page_number = 1
 
         text = chunk.get("text", "")
 
         if not text or not text.strip():
             continue
+
+        # normalize OCR and LaTeX numerals (e.g., 30 _._ 58 -> 30.58, 90 _._ 44% -> 90.44%)
+        text = re.sub(r'(\d+)\s*_\._\s*(\d+)', r'\1.\2', text)
+        text = re.sub(r'(\d+)\s*\.\s*_?(\d+)', r'\1.\2', text)
+        text = re.sub(r'(\d+)\s+%', r'\1%', text)
 
         matches: list[tuple[int, int, str, re.Match]] = []
 

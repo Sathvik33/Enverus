@@ -126,10 +126,12 @@ export async function sendChatStream(
   documentId,
   query,
   userId = null,
+  sessionId = null,
   { onMetadata, onToken, onDone, onError }
 ) {
   const payload = { document_id: documentId, query };
   if (userId) payload.user_id = userId;
+  if (sessionId) payload.session_id = sessionId;
 
   try {
     const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -183,6 +185,64 @@ export async function sendChatStream(
     if (onError) onError(err);
     else throw err;
   }
+}
+
+export async function getSessions(userId) {
+  if (!userId) return [];
+  try {
+    const resp = await fetch(`${API_BASE}/sessions?user_id=${userId}`, {
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function getSessionDetail(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const resp = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function createSession(documentId, userId, title = "New Chat") {
+  const resp = await fetch(`${API_BASE}/sessions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ document_id: documentId, user_id: userId, title }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to create chat session');
+  }
+  return await resp.json();
+}
+
+export async function deleteSession(sessionId) {
+  if (!sessionId) return;
+  await fetch(`${API_BASE}/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+}
+
+export async function clearAllSessions(userId) {
+  if (!userId) return;
+  await fetch(`${API_BASE}/sessions?user_id=${userId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
 }
 
 export async function getHistory(userId) {

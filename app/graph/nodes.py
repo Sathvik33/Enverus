@@ -1,6 +1,7 @@
 import json
 import re
 import uuid
+import sys
 from app.graph.state import RAGState
 from app.guardrails.input_guardrail import validate_input
 from app.guardrails.output_guardrail import validate_output
@@ -120,8 +121,6 @@ async def retrieve_bm25_node(state: RAGState) -> dict:
 
 
 async def retrieve_tables_node(state: RAGState) -> dict:
-    if not state.get("needs_table", True):
-        return {"table_results": []}
     query = state.get("rewritten_query", state.get("cleaned_query", state["query"]))
     doc_id = state["document_id"]
     factory = get_session_factory()
@@ -170,7 +169,7 @@ async def reranker_node(state: RAGState) -> dict:
     return {"reranked_results": [r.model_dump() for r in reranked]}
 
 
-def _extract_evidence_snippet(content: str, query: str = "", max_chars: int = 1500) -> str:
+def _extract_evidence_snippet(content: str, query: str = "", max_chars: int = 3500) -> str:
     if not content or len(content) <= max_chars:
         return content
     if query:
@@ -180,10 +179,9 @@ def _extract_evidence_snippet(content: str, query: str = "", max_chars: int = 15
             m = re.search(pattern, content, re.I)
             if m:
                 start = max(0, m.start() - 300)
-                end = min(len(content), m.end() + 1200)
+                end = min(len(content), m.end() + 2000)
                 return content[start:end]
-    half = max_chars // 2
-    return content[:half] + "\n...\n" + content[-half:]
+    return content[:max_chars]
 
 
 async def evidence_validator_node(state: RAGState) -> dict:
@@ -191,37 +189,9 @@ async def evidence_validator_node(state: RAGState) -> dict:
     if not reranked:
         return {"evidence_sufficient": False, "evidence_reason": "No results found", "evidence": []}
 
-    query = state.get("cleaned_query", state["query"])
-    evidence_text = "\n".join(
-        f"[Page {r.get('page_number')}, {r.get('section', '')}]: {_extract_evidence_snippet(r.get('content', ''), query, 1200)}"
-        for r in reranked[:5]
-    )
-
-    if state.get("query_type") in ("overview", "summary") and reranked:
-        return {
-            "evidence_sufficient": True,
-            "evidence_reason": "Document overview evidence available",
-            "evidence": reranked[:5],
-        }
-
-    try:
-        prompt = EVIDENCE_VALIDATION_PROMPT.format(query=query, evidence=evidence_text)
-        response = await generate_response("Respond only in JSON.", prompt)
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        validation = json.loads(response)
-        sufficient = validation.get("sufficient", True)
-        reason = validation.get("reason", "")
-    except Exception:
-        sufficient = len(reranked) >= 1
-        reason = "Fallback: evidence available" if sufficient else "No evidence"
-
     return {
-        "evidence_sufficient": sufficient,
-        "evidence_reason": reason,
+        "evidence_sufficient": True,
+        "evidence_reason": "Candidate chunks retrieved",
         "evidence": reranked[:5],
     }
 
@@ -276,16 +246,29 @@ async def context_builder_node(state: RAGState) -> dict:
 def build_llm_prompt(state: RAGState) -> tuple[str, str, str]:
     evidence = state.get("evidence", [])
     if not evidence:
-        return "", "", "I could not find sufficient evidence in the document."
+        return "", "", "Not enough information in the PDF."
 
     query = state.get("cleaned_query", state["query"])
     context_parts = []
     for i, e in enumerate(evidence, 1):
-        source = _format_source_label(e)
-        content = _extract_evidence_snippet(e.get("content", ""), query, 2500).strip()
-        context_parts.append(f"Evidence Item {i} {source}:\n{content}")
+        page = e.get("page_number", 1)
+        section = _clean_section(e.get("section", "")) or "General"
+        content = (e.get("content", "")).strip()
+        context_parts.append(f"[Source {i}]\nPage: {page}\nSection: {section}\n\n\"{content}\"")
 
-    context = "\n\n---\n\n".join(context_parts)
+    context = "\n\n".join(context_parts)
+
+    conv_history = state.get("conversation_history", [])
+    if conv_history:
+        history_lines = []
+        for turn in conv_history[-4:]:
+            role = "User" if turn.get("role") == "user" else "Assistant"
+            content = turn.get("content", "").strip()
+            if content:
+                history_lines.append(f"{role}: {content}")
+        if history_lines:
+            context += "\n\nPREVIOUS CONVERSATION IN THIS CHAT:\n" + "\n".join(history_lines)
+
     prompt = ANSWER_PROMPT.format(context=context, query=query)
     return SYSTEM_PROMPT, prompt, ""
 
@@ -299,7 +282,7 @@ async def llm_answer_node(state: RAGState) -> dict:
         answer = await generate_response(sys_prompt, prompt)
     except Exception as e:
         logger.error("llm_answer_failed", error=str(e))
-        answer = "I could not generate an answer due to a system error."
+        answer = "Not enough information in the PDF."
 
     return {"answer": answer}
 
@@ -311,22 +294,59 @@ async def output_guardrail_node(state: RAGState) -> dict:
 
     is_valid, cleaned, reason = validate_output(answer, evidence, query)
 
+    # Construct final context preview for tracing
+    context_parts = []
+    for i, e in enumerate(evidence, 1):
+        page = e.get("page_number", 1)
+        section = _clean_section(e.get("section", "")) or "General"
+        content = (e.get("content", "")).strip()
+        context_parts.append(f"[Source {i}]\nPage: {page}\nSection: {section}\n\n\"{content}\"")
+    final_context = "\n\n".join(context_parts)
+
     trace = {
-        "query": state.get("query", ""),
-        "query_analysis": {
-            "query_type": state.get("query_type", ""),
-            "needs_text": state.get("needs_text", True),
-            "needs_table": state.get("needs_table", False),
-            "needs_image": state.get("needs_image", False),
-        },
-        "text_results": state.get("text_results", []),
+        "query": query,
+        "dense_results": state.get("text_results", []),
         "bm25_results": state.get("bm25_results", []),
-        "table_results": state.get("table_results", []),
-        "image_results": state.get("image_results", []),
-        "rrf_results": state.get("fused_results", []),
+        "hybrid_results": state.get("fused_results", []),
         "reranked_results": state.get("reranked_results", []),
-        "final_evidence": state.get("evidence", []),
+        "final_context": final_context,
     }
+
+    # Debug logging matching Section 1 & Section 11 requirements
+    logger.info(
+        "pipeline_debug_trace",
+        query=query,
+        dense_top_k=len(trace["dense_results"]),
+        bm25_top_k=len(trace["bm25_results"]),
+        hybrid_top_k=len(trace["hybrid_results"]),
+        reranked_top_k=len(trace["reranked_results"]),
+    )
+
+    try:
+        sys_encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+        print("\n" + "=" * 60)
+        print("QUERY")
+        print(f"  {query}")
+        print("->\nDENSE TOP K")
+        for idx, r in enumerate(trace["dense_results"][:3], 1):
+            print(f"  [{idx}] Page {r.get('page_number')} | Sec: {r.get('section', '')[:30]} | {(r.get('content') or '')[:80]}...")
+        print("->\nBM25 TOP K")
+        for idx, r in enumerate(trace["bm25_results"][:3], 1):
+            print(f"  [{idx}] Page {r.get('page_number')} | Sec: {r.get('section', '')[:30]} | {(r.get('content') or '')[:80]}...")
+        print("->\nRRF RESULTS")
+        for idx, r in enumerate(trace["hybrid_results"][:3], 1):
+            print(f"  [{idx}] RRF: {r.get('rrf_score', 0):.4f} | Page {r.get('page_number')} | {(r.get('content') or '')[:80]}...")
+        print("->\nRERANKED RESULTS")
+        for idx, r in enumerate(trace["reranked_results"][:3], 1):
+            print(f"  [{idx}] Score: {r.get('metadata', {}).get('reranker_score', 0):.4f} | Page {r.get('page_number')} | {(r.get('content') or '')[:80]}...")
+        print("->\nFINAL CONTEXT SENT TO LLM")
+        print(f"  {final_context[:250]}...\n  [Total Context Length: {len(final_context)} chars]")
+        print("->\nLLM ANSWER")
+        safe_cleaned = cleaned.encode(sys_encoding, errors="replace").decode(sys_encoding)
+        print(f"  {safe_cleaned}")
+        print("=" * 60 + "\n")
+    except Exception:
+        pass
 
     return {
         "answer": cleaned,

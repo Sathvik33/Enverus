@@ -37,6 +37,7 @@ class ChatRequest(BaseModel):
     document_id: str
     query: str
     user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -44,3 +45,40 @@ class ChatResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     retrieval_trace: Optional[RetrievalTrace] = None
+    session_id: Optional[str] = None
+
+
+class ChatSessionCreate(BaseModel):
+    document_id: str
+    user_id: Optional[str] = None
+    title: Optional[str] = "New Chat"
+
+
+class ChatMessageItem(BaseModel):
+    id: str
+    session_id: str
+    role: str
+    content: str
+    citations: list[dict] = []
+    evidence: list[dict] = []
+    created_at: str
+
+
+class ChatSessionItem(BaseModel):
+    id: str
+    user_id: str
+    document_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+
+
+class ChatSessionDetail(BaseModel):
+    id: str
+    user_id: str
+    document_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: list[ChatMessageItem] = []

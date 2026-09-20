@@ -8,6 +8,7 @@ from app.api.routes_documents import router as documents_router
 from app.api.routes_chat import router as chat_router
 from app.api.routes_auth import router as auth_router
 from app.api.routes_history import router as history_router
+from app.api.routes_sessions import router as sessions_router
 from app.db.database import init_db
 from app.core.logging import setup_logging, get_logger
 
@@ -42,6 +43,7 @@ app.include_router(documents_router)
 app.include_router(chat_router)
 app.include_router(auth_router)
 app.include_router(history_router)
+app.include_router(sessions_router)
 
 image_dir = Path("data/images")
 if image_dir.exists():

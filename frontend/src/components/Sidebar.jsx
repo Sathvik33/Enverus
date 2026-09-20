@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { 
   FileText, Upload, Clock, Trash2, ChevronRight, 
-  Layers, Image as ImageIcon, Table as TableIcon, Hash, CheckCircle2, AlertCircle, Loader2
+  Layers, Image as ImageIcon, Table as TableIcon, Hash, CheckCircle2, AlertCircle, Loader2,
+  MessageSquare, MessageSquarePlus
 } from 'lucide-react';
-import { uploadDocument, clearHistory } from '../services/api';
+import { uploadDocument, clearAllSessions } from '../services/api';
 
 export default function Sidebar({
   activeDoc,
@@ -11,9 +12,12 @@ export default function Sidebar({
   setDocumentId,
   onDocumentLoaded,
   onDeleteDocument,
-  history,
-  onSelectHistory,
-  onHistoryCleared,
+  sessions = [],
+  activeSessionId,
+  onSelectSession,
+  onNewChat,
+  onDeleteSession,
+  onSessionsCleared,
   user,
   onOpenAuth,
 }) {
@@ -39,41 +43,41 @@ export default function Sidebar({
       setUploadError(err.message || 'Upload failed');
     } finally {
       setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   const handleDocIdSubmit = (e) => {
     e.preventDefault();
-    if (docInput.trim()) {
-      setDocumentId(docInput.trim());
-      if (onDocumentLoaded) onDocumentLoaded(docInput.trim());
-      setDocInput('');
-    }
+    const trimmed = docInput.trim();
+    if (!trimmed) return;
+    setDocumentId(trimmed);
+    if (onDocumentLoaded) onDocumentLoaded(trimmed);
+    setDocInput('');
   };
 
-  const handleClearHistory = async () => {
+  const handleClearSessions = async () => {
     if (!user) return;
-    if (window.confirm('Clear all your chat history?')) {
-      await clearHistory(user.id);
-      if (onHistoryCleared) onHistoryCleared();
+    const confirmClear = window.confirm('Are you sure you want to clear all chat sessions?');
+    if (!confirmClear) return;
+    try {
+      await clearAllSessions(user.id);
+      if (onSessionsCleared) onSessionsCleared();
+    } catch (err) {
+      console.warn('Failed to clear sessions:', err);
     }
   };
 
-  const handleDeleteDoc = async (e) => {
-    e.stopPropagation();
+  const handleDeleteDoc = async () => {
     if (!documentId) return;
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${activeDoc?.filename || 'this document'}"?\nThis will remove the document and its indexed chunks from the database.`
+    const confirmDelete = window.confirm(
+      'Are you sure you want to delete this document? All vector embeddings and chunks will be permanently removed.'
     );
-    if (!confirmed) return;
+    if (!confirmDelete) return;
 
     setDeleting(true);
     try {
-      if (onDeleteDocument) {
-        await onDeleteDocument(documentId);
-      }
-    } catch (err) {
-      alert(err.message || 'Failed to delete document');
+      await onDeleteDocument(documentId);
     } finally {
       setDeleting(false);
     }
@@ -158,19 +162,20 @@ export default function Sidebar({
             type="file" 
             ref={fileInputRef} 
             accept=".pdf" 
-            style={{ display: 'none' }}
-            onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+            style={{ display: 'none' }} 
+            onChange={(e) => {
+              if (e.target.files?.[0]) handleFileUpload(e.target.files[0]);
+            }} 
           />
           {uploading ? (
             <div className="upload-loading">
-              <Loader2 size={24} className="animate-spin text-blue" />
-              <span>Ingesting & Embedding PDF...</span>
+              <Loader2 className="animate-spin text-blue" size={24} />
+              <span>Processing PDF Layout & Vectors...</span>
             </div>
           ) : (
             <div className="upload-prompt">
-              <Upload size={20} className="text-blue" />
-              <span><strong>Click to Upload</strong> or drag PDF here</span>
-              <span className="upload-hint">Extracts text, tables, and SigLIP images</span>
+              <Upload size={20} className="text-muted" />
+              <span>Drop research paper (.pdf) or click to upload</span>
             </div>
           )}
         </div>
@@ -179,55 +184,85 @@ export default function Sidebar({
 
       <hr className="sidebar-divider" />
 
-      {/* Chat History Section */}
+      {/* Chat Sessions Section */}
       <div className="sidebar-section history-section">
         <div className="section-label-row">
-          <span className="section-label">Chat History</span>
-          {user && history.length > 0 && (
-            <button 
-              className="btn-link text-danger" 
-              onClick={handleClearHistory}
-              title="Clear all history"
-            >
-              <Trash2 size={13} />
-              <span>Clear</span>
-            </button>
-          )}
+          <span className="section-label">Chats</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            {user && (
+              <button 
+                className="btn btn-primary btn-new-chat" 
+                onClick={onNewChat}
+                title="Start a new isolated chat"
+              >
+                <MessageSquarePlus size={13} />
+                <span>New Chat</span>
+              </button>
+            )}
+            {user && sessions.length > 0 && (
+              <button 
+                className="btn-link text-danger" 
+                onClick={handleClearSessions}
+                title="Clear all chats"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
         {user ? (
-          history.length > 0 ? (
+          sessions.length > 0 ? (
             <div className="history-list">
-              {history.map((item) => (
-                <div 
-                  key={item.id} 
-                  className="history-item glass-panel"
-                  onClick={() => onSelectHistory(item)}
-                >
-                  <div className="history-icon">
-                    <Clock size={14} className="text-muted" />
-                  </div>
-                  <div className="history-text">
-                    <div className="history-query">{item.query}</div>
-                    <div className="history-time">
-                      {item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+              {sessions.map((s) => {
+                const isActive = s.id === activeSessionId;
+                return (
+                  <div 
+                    key={s.id} 
+                    className={`history-item glass-panel ${isActive ? 'history-item-active' : ''}`}
+                    onClick={() => onSelectSession(s)}
+                  >
+                    <div className="history-icon">
+                      <MessageSquare size={14} className={isActive ? 'text-blue' : 'text-muted'} />
                     </div>
+                    <div className="history-text">
+                      <div className="history-query">{s.title || 'Untitled Chat'}</div>
+                      <div className="history-time">
+                        {s.updated_at ? new Date(s.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}
+                        {s.message_count ? ` • ${s.message_count} msgs` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-delete-session"
+                      title="Delete chat"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm('Delete this chat?')) {
+                          onDeleteSession(s.id);
+                        }
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
-                  <ChevronRight size={14} className="history-arrow" />
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="history-empty">
-              <Clock size={16} className="text-muted" />
-              <p>No questions asked yet. Start querying the active paper!</p>
+              <MessageSquare size={16} className="text-muted" />
+              <p>No chats yet. Start querying the active paper!</p>
+              <button className="btn btn-secondary btn-sm" onClick={onNewChat}>
+                <MessageSquarePlus size={13} /> Start First Chat
+              </button>
             </div>
           )
         ) : (
           <div className="history-auth-prompt glass-panel">
-            <p>Sign in to save and review past questions and structured evidence.</p>
+            <p>Sign in to save multiple conversations and prevent context mixing.</p>
             <button className="btn btn-primary btn-sm btn-block" onClick={() => onOpenAuth('signin')}>
-              Sign In to Save History
+              Sign In to Save Chats
             </button>
           </div>
         )}

@@ -22,7 +22,10 @@ def _get_reranker() -> CrossEncoder:
             model=settings.RERANKER_MODEL,
         )
 
-        _reranker = CrossEncoder(settings.RERANKER_MODEL)
+        try:
+            _reranker = CrossEncoder(settings.RERANKER_MODEL, local_files_only=True)
+        except Exception:
+            _reranker = CrossEncoder(settings.RERANKER_MODEL)
 
     return _reranker
 
@@ -41,10 +44,6 @@ def _candidate_text(candidate: FusedResult, query: str = "") -> str:
                 start = max(0, m.start() - 300)
                 end = min(len(content), m.end() + 1500)
                 content = content[start:end]
-
-    # retain head and tail of long chunks so captions are not cut off
-    if len(content) > 1800:
-        content = content[:900] + "\n...\n" + content[-900:]
 
     if content:
         parts.append(content)
